@@ -1,0 +1,259 @@
+		     +--------------------------+
+       	       	     |		CS 140		|
+		     | PROJECT 2: USER PROGRAMS	|
+		     | 	   DESIGN DOCUMENT     	|
+		     +--------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Rohit Dubey <rohitdub@buffalo.edu>
+Anudeep Bulla <anudeepb@buffalo.edu>
+Hao Fan <hfan2@buffalo.edu>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+			   ARGUMENT PASSING
+			   ================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe how you implemented argument parsing.  How do
+>> you arrange for the elements of argv[] to be in the right order?
+>> How do you avoid overflowing the stack page?
+/* Modifications from previous approach to move argument parsing to setup_stack function */
+
+In our implimentation we implemented argument parsing inside setup_stack function
+instead of performing it in process_execute() and having to maintain
+global variables to keep track of command name.
+We create an args array with by tokenizing file_name.Next, we push the arguments
+in the stack, saving the address of each argument in a separate array, which are 
+pushed after Sentinels. Finally we push, the size of the arguments array as per 
+the specification in reference document.
+
+
+---- RATIONALE ----
+
+>> A3: Why does Pintos implement strtok_r() but not strtok()?
+strtok_r() is a reentrant version of strtok() which makes it safer for usage
+by multiple threads. If strtok() is used and another thread interrupts the 
+running thread and calls strtok(), it would change the static pointer used by 
+strtok, causing original thread's strtok to pick up from where the 
+interrupting thread's strtok left off.
+
+>> A4: In Pintos, the kernel separates commands into a executable name
+>> and arguments.  In Unix-like systems, the shell does this
+>> separation.  Identify at least two advantages of the Unix approach.
+The Unix approach makes it easier to execute commands from other locations than
+the current directory using PATH variable. If this is done by the kernel, it would
+pose an additional overhead of looking for path of the program before initializing it.
+
+Also, separating command and arguments using the shell provides addtional capabilities
+like pipelining the output from the command into a file, validation of arguments etc. 
+To provide similar functionality using kernel, the code for these capabilities would 
+have to be added to the kernel.
+
+			     SYSTEM CALLS
+			     ============
+				 
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+struct lock filesys_lock;				/*lock for file system*/
+
+
+struct thread
+  {
+    /* Owned by thread.c. */
+    tid_t tid;                          /* Thread identifier. */
+    enum thread_status status;          /* Thread state. */
+    char name[16];                      /* Name (for debugging purposes). */
+    uint8_t *stack;                     /* Saved stack pointer. */
+    int priority;                       /* Priority. */
+    int d_priority_int;                 /* Donated Priority. */
+    struct list d_priority_list;        /* Donated Priority List  */
+    struct list_elem allelem;           /* List element for all threads list. */
+
+    /* Shared between thread.c and synch.c. */
+    struct list_elem elem;              /* List element. */
+
+#ifdef USERPROG
+    /* Owned by userprog/process.c. */
+    uint32_t *pagedir;                  /* Page directory. */
+    struct semaphore parent_wait;        /*Semaphore to make parents wait for child*/
+    struct thread *parent;              /*ADDED LATER - Keep track of threads parent, to report loading status*/ 
+    struct list file_list;              /*ADDED LATER - to keep track of files openened by a thread*/ 
+    int fd;     				        /*ADDED LATER first unallocated file descriptor in file_list 
+	                                       so that we don't have to iterate through the whole list 
+										   everytime to add a new file*/
+#endif
+
+    /* Owned by thread.c. */
+    unsigned magic;                     /* Detects stack overflow. */
+
+    /* used for multilevel queue scheduling*/
+    int nice;                           /*nice value*/
+    pfloat recent_cpu;                  /*Recent CPU value for the thread*/
+
+  };
+
+
+>> B2: Describe how file descriptors are associated with open files.
+>> Are file descriptors unique within the entire OS or just within a
+>> single process?
+For every process, we maintain an array that contains all the files opened
+by the process using the index as the file descriptors.
+As per the pintos reference, the first two elements in this array are reserved 
+for STDIN_FILENO and STDOUT_FILENO
+Since every process maintains its own array, the file descriptors are only
+unique within a process.
+
+---- ALGORITHMS ----
+
+>> B3: Describe your code for reading and writing user data from the
+>> kernel.
+When reading or writing user data, we first check if the file descriptor
+and address are valid before actually performing read or write.
+By making sure the pointers are valid, we can read/write to memory without
+having to worry about faults.
+
+>> B4: Suppose a system call causes a full page (4,096 bytes) of data
+>> to be copied from user space into the kernel.  What is the least
+>> and the greatest possible number of inspections of the page table
+>> (e.g. calls to pagedir_get_page()) that might result?  What about
+>> for a system call that only copies 2 bytes of data?  Is there room
+>> for improvement in these numbers, and how much?
+Since we use pagedir_get_page() to check each page once. Therefore, the
+minimum number of inspections would be 1 if all the data is stored in a 
+single page.
+For the pull page of data, the data may be spread across two pages causing
+upto 2 possible inspections.
+Techinically, 2 possible inspections are also possible for 2 bytes of data,
+but the chances that the data will span 2 pages are far lower.	
+
+
+>> B5: Briefly describe your implementation of the "wait" system call
+>> and how it interacts with process termination.
+//MODIFIED APPROACH TO OPTIMIZE CODING
+Our implementation for the wait system call calls the process_wait()
+function in process.c which handles all the checks and corner cases
+and uses the semaphore parent_wait in the thread structure to wait
+until the other thread finished and updates the semaphore.
+
+>> B6: Any access to user program memory at a user-specified address
+>> can fail due to a bad pointer value.  Such accesses must cause the
+>> process to be terminated.  System calls are fraught with such
+>> accesses, e.g. a "write" system call requires reading the system
+>> call number from the user stack, then each of the call's three
+>> arguments, then an arbitrary amount of user memory, and any of
+>> these can fail at any point.  This poses a design and
+>> error-handling problem: how do you best avoid obscuring the primary
+>> function of code in a morass of error-handling?  Furthermore, when
+>> an error is detected, how do you ensure that all temporarily
+>> allocated resources (locks, buffers, etc.) are freed?  In a few
+>> paragraphs, describe the strategy or strategies you adopted for
+>> managing these issues.  Give an example.
+For every pointer, we call pagedir_get_page() and see if the returned value is not
+null and if the pointer references to a virtual address using is_user_vaddr().
+By verifying every pointer before accessing it, we prevent errors.
+
+Also, we free up all allocated resources in the exit() system call to ensure all
+the temporarily allocated resources are freed when the process terminates.
+
+---- SYNCHRONIZATION ----
+
+>> B7: The "exec" system call returns -1 if loading the new executable
+>> fails, so it cannot return before the new executable has completed
+>> loading.  How does your code ensure this?  How is the load
+>> success/failure status passed back to the thread that calls "exec"?
+Our current approach uses start_process() to load the new executable.
+However, this approach will cause the thread to fail if loading of new
+execuatble fails. To ensure that -1 is returned to the calling process, 
+we can add a variable child_loaded in struct thread that can be set to 
+true if the child loads successfully and make the calling thread wait 
+for this variable value to be set.
+
+>> B8: Consider parent process P with child process C.  How do you
+>> ensure proper synchronization and avoid race conditions when P
+>> calls wait(C) before C exits?  After C exits?  How do you ensure
+>> that all resources are freed in each case?  How about when P
+>> terminates without waiting, before C exits?  After C exits?  Are
+>> there any special cases?
+We use condition variable and lock to ensure proper synchronization.
+If the P calls wait(C) after C exits, it will not be present in P's
+children array and hence can return right away.
+If call to wait(C) occurs before C exits, P will wait for C to call it's
+exit funtion when it will remove itself from P's children array and P's
+call to wait() can return.
+In each of these cases, allocated resources will be freed in C's exit system
+call.
+If P terminates without waiting after C exits, P's data and hence its children
+array gets freed up without any impact on C since it has already finished.
+If P terminates without waiting before C exits, then C's pointer to its parent
+will be null and P's children array will no longer exist therefore C can exit 
+as if it had no parent process.
+
+---- RATIONALE ----
+
+>> B9: Why did you choose to implement access to user memory from the
+>> kernel in the way that you did?
+The approach to verify pointers seemed logical and easier of the two approaches
+detailed in the design document and the functions like pagedir_get_page() and
+is_user_vaddr() make it easier to check for validity of pointers.
+
+>> B10: What advantages or disadvantages can you see to your design
+>> for file descriptors?
+Our current design imposes a limit of 126 on file descriptors due to the
+array of open files requiring a size and first two file descriptors reserved
+for STDIN_FILENO and STDOUT_FILENO. This also wastes memory space when only a few
+files are open by allocating an array of a fixed size of 128.
+
+However, this approach provides speed and simplicity when allocating and looking up
+file descriptors.
+
+
+>> B11: The default tid_t to pid_t mapping is the identity mapping.
+>> If you changed it, what advantages are there to your approach?
+If the default tid_t to pid_t identify mapping is changed, this would imply that
+a process can support multiple threads which is not supported in Pintos.
+
+			   SURVEY QUESTIONS
+			   ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?
